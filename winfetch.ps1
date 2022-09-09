@@ -89,8 +89,13 @@ param(
     [array]$showpkgs = @("scoop", "choco")
 )
 
-if (-not ($IsWindows -or $PSVersionTable.PSVersion.Major -eq 5)) {
+if (-not ($IsWindows)) {
     Write-Error "Only supported on Windows."
+    exit 1
+}
+
+if (-not ($PSVersionTable.PSVersion.Major -ge 5)){
+    Write-Error "Only supported on PowerShell 5+."
     exit 1
 }
 
@@ -116,6 +121,7 @@ $defaultConfig = @'
 # $ascii = $true
 
 # Set the version of Windows to derive the logo from.
+# Options: "Windows 11", "Windows 10", "Windows 7", "Windows 2000", "Microsoft"
 # $logo = "Windows 10"
 
 # Specify width for image/logo
@@ -165,8 +171,8 @@ $defaultConfig = @'
 # $ShowPkgs = @("winget", "scoop", "choco")
 
 # Use the following option to specify custom package managers.
-# Create a function with that name as suffix, and which returns
-# the number of packages. Two examples are shown here:
+# Create a function with the package manager as the suffix, which
+# returns the number of packages. Two examples are shown here:
 # $CustomPkgs = @("cargo", "just-install")
 # function info_pkg_cargo {
 #     return (cargo install --list | Where-Object {$_ -like "*:" }).Length
@@ -175,7 +181,7 @@ $defaultConfig = @'
 #     return (just-install list).Length
 # }
 
-# Configure how to show info for levels
+# Configure how to show info for info lines
 # Default is for text only.
 # 'bar' is for bar only.
 # 'textbar' is for text + bar.
@@ -196,9 +202,9 @@ $defaultConfig = @'
     "computer"
     "kernel"
     "motherboard"
-    # "custom_time"  # use custom info line
+    # "custom_time"  # Use custom info line
     "uptime"
-    # "ps_pkgs"  # takes some time
+    # "ps_pkgs"  # Takes some time
     "pkgs"
     "pwsh"
     "resolution"
@@ -228,7 +234,7 @@ if (-not $configPath) {
     }
 }
 
-# generate default config
+# Generate default config
 if ($genconf -and (Test-Path $configPath)) {
     $choiceYes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
         "overwrite your configuration with the default"
@@ -249,7 +255,7 @@ if (-not (Test-Path $configPath) -or [String]::IsNullOrWhiteSpace((Get-Content $
     }
 }
 
-# load config file
+# Load config file
 $config = . $configPath
 if (-not $config -or $all) {
     $config = @(
@@ -281,7 +287,7 @@ if (-not $config -or $all) {
     )
 }
 
-# prevent config from overriding specified parameters
+# Prevent config from overriding specified parameters
 foreach ($param in $PSBoundParameters.Keys) {
     Set-Variable $param $PSBoundParameters[$param]
 }
@@ -652,7 +658,7 @@ function info_resolution {
 
 
 # ===== TERMINAL =====
-# this section works by getting the parent processes of the current powershell instance.
+# This section works by getting the parent processes of the current powershell instance.
 function info_terminal {
     $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh'
     if ($PSVersionTable.PSEdition.ToString() -ne 'Core') {
@@ -726,7 +732,7 @@ function info_cpu {
 
 function info_gpu {
     [System.Collections.ArrayList]$lines = @()
-    #loop through Win32_VideoController
+    # Loop through Win32_VideoController
     foreach ($gpu in Get-CimInstance -ClassName Win32_VideoController -Property Name -CimSession $cimSession) {
         [void]$lines.Add(@{
             title   = "GPU"
@@ -1403,16 +1409,16 @@ function info_public_ip {
 
 
 if (-not $stripansi) {
-    # unhide the cursor after a terminating error
+    # Unhide the cursor after a terminating error
     trap { "$e[?25h"; break }
 
-    # reset terminal sequences and display a newline
+    # Reset terminal sequences and display a newline
     Write-Output "$e[0m$e[?25l"
 } else {
     Write-Output ""
 }
 
-# write logo
+# Write logo
 if (-not $stripansi) {
     foreach ($line in $img) {
         Write-Output " $line"
@@ -1423,14 +1429,14 @@ $GAP = 3
 $writtenLines = 0
 $freeSpace = $Host.UI.RawUI.WindowSize.Width - 1
 
-# move cursor to top of image and to its right
+# Move cursor to top of image and to its right
 if ($img -and -not $stripansi) {
     $freeSpace -= 1 + $COLUMNS + $GAP
     Write-Output "$e[$($img.Length + 1)A"
 }
 
 
-# write info
+# Write info
 foreach ($item in $config) {
     if (Test-Path Function:"info_$item") {
         $info = & "info_$item"
@@ -1457,10 +1463,10 @@ foreach ($item in $config) {
 
         if ($img) {
             if (-not $stripansi) {
-                # move cursor to right of image
+                # Move cursor to right of image
                 $output = "$e[$(2 + $COLUMNS + $GAP)G$output"
             } else {
-                # write image progressively
+                # Write image progressively
                 $imgline = ("$($img[$writtenLines])"  -replace $ansiRegex, "").PadRight($COLUMNS)
                 $output = " $imgline   $output"
             }
@@ -1482,14 +1488,14 @@ foreach ($item in $config) {
 }
 
 if ($stripansi) {
-    # write out remaining image lines
+    # Write out remaining image lines
     for ($i = $writtenLines; $i -lt $img.Length; $i++) {
         $imgline = ("$($img[$i])"  -replace $ansiRegex, "").PadRight($COLUMNS)
         Write-Output " $imgline"
     }
 }
 
-# move cursor back to the bottom and print 2 newlines
+# Move cursor back to the bottom and print 2 newlines
 if (-not $stripansi) {
     $diff = $img.Length - $writtenLines
     if ($img -and $diff -gt 0) {
