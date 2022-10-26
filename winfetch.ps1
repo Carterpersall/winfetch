@@ -726,7 +726,7 @@ function info_cpu_usage {
 
 # ===== MEMORY =====
 function info_memory {
-    $m = Get-CimInstance -ClassName Win32_OperatingSystem -Property TotalVisibleMemorySize,FreePhysicalMemory -CimSession $cimSession
+    $m = Get-CimInstance -Query "SELECT TotalVisibleMemorySize,FreePhysicalMemory FROM Win32_OperatingSystem"
     $total = $m.TotalVisibleMemorySize / 1mb
     $used = ($m.TotalVisibleMemorySize - $m.FreePhysicalMemory) / 1mb
     $usage = [math]::floor(($used / $total * 100))
