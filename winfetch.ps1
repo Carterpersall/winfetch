@@ -222,8 +222,11 @@ if (-not $configPath) {
     }
 }
 
+# Test if config file exists
+$configExists = [System.IO.File]::Exists($configpath)
+
 # generate default config
-if ($genconf -and (Test-Path $configPath)) {
+if ($genconf -and $configExists) {
     $choiceYes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", `
         "overwrite your configuration with the default"
     $choiceNo = New-Object System.Management.Automation.Host.ChoiceDescription "&No", `
@@ -233,7 +236,7 @@ if ($genconf -and (Test-Path $configPath)) {
     if ($result -eq 0) { Remove-Item -Path $configPath } else { exit 1 }
 }
 
-if (-not (Test-Path $configPath) -or [String]::IsNullOrWhiteSpace((Get-Content $configPath))) {
+if (-not $configExists -or [String]::IsNullOrWhiteSpace((Get-Content $configPath))) {
     New-Item -Type File -Path $configPath -Value $defaultConfig -Force | Out-Null
     if ($genconf) {
         Write-Host "Saved default config to '$configPath'."
@@ -362,7 +365,7 @@ $img = if (-not $noimage) {
         }
 
         Add-Type -AssemblyName 'System.Drawing'
-        $OldImage = if (Test-Path $image -PathType Leaf) {
+        $OldImage = if ([System.IO.File]::Exists($image)) {
             [Drawing.Bitmap]::FromFile((Resolve-Path $image))
         } else {
             [Drawing.Bitmap]::FromStream((Invoke-WebRequest $image -UseBasicParsing).RawContentStream)
@@ -855,7 +858,7 @@ function info_pkgs {
     if ("scoop" -in $ShowPkgs) {
         $scoopdir = if ($Env:SCOOP) { "$Env:SCOOP\apps" } else { "$Env:UserProfile\scoop\apps" }
 
-        if (Test-Path $scoopdir) {
+        if ([System.IO.Directory]::Exists($scoopdir)) {
             $scooppkg = (Get-ChildItem -Path $scoopdir -Directory).Count - 1
         }
 
@@ -865,7 +868,7 @@ function info_pkgs {
     }
 
     foreach ($pkgitem in $CustomPkgs) {
-        if (Test-Path Function:"info_pkg_$pkgitem") {
+        if (Get-Command "info_pkg_$pkgitem") {
             $count = & "info_pkg_$pkgitem"
             $pkgs += "$count ($pkgitem)"
         }
@@ -1405,7 +1408,7 @@ if ($img -and -not $stripansi) {
 
 # write info
 foreach ($item in $config) {
-    if (Test-Path Function:"info_$item") {
+    if (Get-Command "info_$item") {
         $info = & "info_$item"
     } else {
         $info = @{ title = "$e[31mfunction 'info_$item' not found" }
