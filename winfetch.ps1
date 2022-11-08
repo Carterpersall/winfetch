@@ -287,7 +287,7 @@ foreach ($param in $PSBoundParameters.Keys) {
 $e = [char]0x1B
 $ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
 $cimSession = New-CimSession
-$os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption,OSArchitecture,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory -CimSession $cimSession
+$os = Get-CimInstance -Query "SELECT Caption,OSArchitecture,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory FROM Win32_OperatingSystem" -CimSession $cimSession
 $t = if ($blink) { "5" } else { "1" }
 $COLUMNS = $imgwidth
 
@@ -555,7 +555,7 @@ function info_os {
 
 # ===== MOTHERBOARD =====
 function info_motherboard {
-    $motherboard = Get-CimInstance Win32_BaseBoard -CimSession $cimSession -Property Manufacturer,Product
+    $motherboard = Get-CimInstance -Query "SELECT Manufacturer,Product FROM Win32_BaseBoard" -CimSession $cimSession
     return @{
         title = "Motherboard"
         content = "{0} {1}" -f $motherboard.Manufacturer, $motherboard.Product
@@ -584,7 +584,7 @@ function info_dashes {
 
 # ===== COMPUTER =====
 function info_computer {
-    $compsys = Get-CimInstance -ClassName Win32_ComputerSystem -Property Manufacturer,Model -CimSession $cimSession
+    $compsys = Get-CimInstance -Query "SELECT Manufacturer,Model FROM Win32_ComputerSystem" -CimSession $cimSession
     return @{
         title   = "Host"
         content = '{0} {1}' -f $compsys.Manufacturer, $compsys.Model
@@ -690,7 +690,7 @@ function info_theme {
 
 # ===== CPU/GPU =====
 function info_cpu {
-    $cpu = Get-CimInstance -ClassName Win32_Processor -Property Name,MaxClockSpeed -CimSession $cimSession
+    $cpu = Get-CimInstance -Query "SELECT Name,MaxClockSpeed FROM Win32_Processor" -CimSession $cimSession
     $cpuname = if ($cpu.Name.Contains('@')) {
         ($cpu.Name -Split ' @ ')[0].Trim()
     } else {
@@ -706,7 +706,7 @@ function info_cpu {
 function info_gpu {
     [System.Collections.ArrayList]$lines = @()
     #loop through Win32_VideoController
-    foreach ($gpu in Get-CimInstance -ClassName Win32_VideoController -Property Name -CimSession $cimSession) {
+    foreach ($gpu in Get-CimInstance -Query "SELECT Name FROM Win32_VideoController" -CimSession $cimSession) {
         [void]$lines.Add(@{
             title   = "GPU"
             content = $gpu.Name
