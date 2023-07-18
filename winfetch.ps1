@@ -85,12 +85,12 @@ param(
     [ValidateSet("text", "bar", "textbar", "bartext")][string]$batterystyle = "text",
     [ValidateScript({$_ -gt 1 -and $_ -lt $Host.UI.RawUI.WindowSize.Width-1})][alias('w')][int]$imgwidth = 35,
     [ValidateScript({$_ -ge 0 -and $_ -le 255})][alias('t')][int]$alphathreshold = 50,
-    [array]$showdisks = @($env:SystemDrive),
-    [array]$showpkgs = @("scoop", "choco")
+    [array]$showdisks = @($env:SystemDrive, "/"),
+    [array]$showpkgs = $(if ($IsWindows) {@("scoop", "choco")} elseif ($IsMacOS) {@("brew", "macports")})
 )
 
-if (-not ($IsWindows -or $PSVersionTable.PSVersion.Major -eq 5)) {
-    Write-Error "Only supported on Windows."
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Error "Only supported on Powershell 5+."
     exit 1
 }
 
@@ -224,7 +224,7 @@ if (-not $configPath) {
     if ($env:WINFETCH_CONFIG_PATH) {
         $configPath = $env:WINFETCH_CONFIG_PATH
     } else {
-        $configPath = "${env:USERPROFILE}\.config\winfetch\config.ps1"
+        $configPath = "~\.config\winfetch\config.ps1"
     }
 }
 
@@ -289,8 +289,12 @@ foreach ($param in $PSBoundParameters.Keys) {
 # ===== VARIABLES =====
 $e = [char]0x1B
 $ansiRegex = '([\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~])))'
-$cimSession = New-CimSession
-$os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption,OSArchitecture,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory -CimSession $cimSession
+if ($IsWindows) {
+    $cimSession = New-CimSession
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -Property Caption,OSArchitecture,LastBootUpTime,TotalVisibleMemorySize,FreePhysicalMemory -CimSession $cimSession
+} elseif ($IsMacOS) {
+    $os = ConvertFrom-Json ((system_profiler SPHardwareDataType SPSoftwareDataType SPDisplaysDataType SPNetworkDataType SPPowerDataType SPInternationalDataType -json) -join "`n")
+}
 $t = if ($blink) { "5" } else { "1" }
 $COLUMNS = $imgwidth
 
@@ -434,6 +438,8 @@ $img = if (-not $noimage) {
                 $logo = "Windows 11"
             } elseif ($os -Like "*Windows 10 *" -Or $os -Like "*Windows 8.1 *" -Or $os -Like "*Windows 8 *") {
                 $logo = "Windows 10"
+            } elseif ($IsMacOS) {
+                $logo = "macOS"
             } else {
                 $logo = "Windows 7"
             }
@@ -535,8 +541,29 @@ $img = if (-not $noimage) {
                 "${e}[${t};30m   :: ====== 000000 BBf                `BBBBB"
                 "     ${c1}   ==  000000 B                     BBB"
             )
+        } elseif ($logo -eq "MacOS") {
+            $COLUMNS = 30
+            @(
+                "${e}[${t};32m                     ..'      "
+                "${e}[${t};32m                 ,xNMM.       "
+                "${e}[${t};32m               .OMMMMo        "
+                "${e}[${t};32m               lMM`"          "
+                "${e}[${t};32m     .;loddo:.  .olloddol;.   "
+                "${e}[${t};32m   cKMMMMMMMMMMNWMMMMMMMMMM0: "
+                "${e}[${t};33m .KMMMMMMMMMMMMMMMMMMMMMMMWd. "
+                "${e}[${t};33m XMMMMMMMMMMMMMMMMMMMMMMMX.   "
+                "${e}[${t};31m;MMMMMMMMMMMMMMMMMMMMMMMM:    "
+                "${e}[${t};31m:MMMMMMMMMMMMMMMMMMMMMMMM:    "
+                "${e}[${t};31m.MMMMMMMMMMMMMMMMMMMMMMMMX.   "
+                "${e}[${t};31m kMMMMMMMMMMMMMMMMMMMMMMMMWd. "
+                "${e}[${t};35m 'XMMMMMMMMMMMMMMMMMMMMMMMMMMk"
+                "${e}[${t};35m  'XMMMMMMMMMMMMMMMMMMMMMMMMK."
+                "${e}[${t};34m    kMMMMMMMMMMMMMMMMMMMMMMd  "
+                "${e}[${t};34m     ;KMMMMMMMWXXWMMMMMMMk.   "
+                "${e}[${t};34m       `"cooc*`"    `"*coo'`" "
+            )
         } else {
-            Write-Error 'The only version logos supported are Windows 11, Windows 10/8.1/8, Windows 7/Vista/XP, Windows 2000/98/95 and Microsoft.'
+            Write-Error 'The only version logos supported are Windows 11, Windows 10/8.1/8, Windows 7/Vista/XP, Windows 2000/98/95, Microsoft, and MacOS.'
             exit 1
         }
     }
@@ -566,19 +593,33 @@ function info_colorbar {
 
 # ===== OS =====
 function info_os {
-    return @{
-        title   = "OS"
-        content = "$($os.Caption.TrimStart('Microsoft ')) [$($os.OSArchitecture)]"
+    if ($IsWindows) {
+        return @{
+            title   = "OS"
+            content = "$($os.Caption.TrimStart('Microsoft ')) [$($os.OSArchitecture)]"
+        }
+    } elseif ($IsMacOS) {
+        return @{
+            title = "OS"
+            content = "macOS " + [System.Environment]::OSVersion.Version
+        }
     }
 }
 
 
 # ===== MOTHERBOARD =====
 function info_motherboard {
-    $motherboard = Get-CimInstance Win32_BaseBoard -CimSession $cimSession -Property Manufacturer,Product
-    return @{
-        title = "Motherboard"
-        content = "{0} {1}" -f $motherboard.Manufacturer, $motherboard.Product
+    if ($IsWindows){
+        $motherboard = Get-CimInstance Win32_BaseBoard -CimSession $cimSession -Property Manufacturer,Product
+        return @{
+            title   = "Motherboard"
+            content = "{0} {1}" -f $motherboard.Manufacturer, $motherboard.Product
+        }
+    } elseif ($IsMacOS) {
+        return @{
+            title   = "Motherboard"
+            content = $os.SPHardwareDataType.machine_model
+        }
     }
 }
 
@@ -587,14 +628,14 @@ function info_motherboard {
 function info_title {
     return @{
         title   = ""
-        content = "${e}[1;33m{0}${e}[0m@${e}[1;33m{1}${e}[0m" -f [System.Environment]::UserName,$env:COMPUTERNAME
+        content = "${e}[1;33m{0}${e}[0m@${e}[1;33m{1}${e}[0m" -f [System.Environment]::UserName,[System.Environment]::MachineName
     }
 }
 
 
 # ===== DASHES =====
 function info_dashes {
-    $length = [System.Environment]::UserName.Length + $env:COMPUTERNAME.Length + 1
+    $length = [System.Environment]::UserName.Length + [System.Environment]::MachineName.Length + 1
     return @{
         title   = ""
         content = "-" * $length
@@ -604,10 +645,31 @@ function info_dashes {
 
 # ===== COMPUTER =====
 function info_computer {
-    $compsys = Get-CimInstance -ClassName Win32_ComputerSystem -Property Manufacturer,Model -CimSession $cimSession
-    return @{
-        title   = "Host"
-        content = '{0} {1}' -f $compsys.Manufacturer, $compsys.Model
+    if ($IsWindows) {
+        $compsys = Get-CimInstance -ClassName Win32_ComputerSystem -Property Manufacturer,Model -CimSession $cimSession
+        return @{
+            title   = "Host"
+            content = '{0} {1}' -f $compsys.Manufacturer, $compsys.Model
+        }
+    } elseif ($IsMacOS) {
+        $deviceModel = /usr/libexec/PlistBuddy -c "print 'CPU Names':$($os.SPHardwareDataType.serial_number.Substring(8))-en-US_US" "$HOME/Library/Preferences/com.apple.SystemProfiler.plist"
+
+        if ( [string]::IsNullOrWhiteSpace($deviceModel) ) {
+            $deviceIdentifier = (sysctl hw.model).split(': ')[1]
+            $deviceModelcurl = curl -s "https://raw.githubusercontent.com/quacktacular/mac-device-id-to-model/main/models.txt" | Select-String -SimpleMatch $deviceIdentifier -Raw
+            if ( $deviceModelcurl -Like "*(*)*" ) {
+                $deviceModel = $deviceModelcurl.Split('|')[0] 
+            }
+        }
+
+        return @{
+            title   = "Host"
+            content = if ([string]::IsNullOrWhiteSpace($deviceModel)) {
+                "$e[1;31mUnknown Mac$e[0m]"
+            } else {
+                "Apple $deviceModel"
+            }
+        }
     }
 }
 
@@ -616,33 +678,68 @@ function info_computer {
 function info_kernel {
     return @{
         title   = "Kernel"
-        content = "$([System.Environment]::OSVersion.Version)"
+        content = 
+        if ($IsWindows) {
+            "$([System.Environment]::OSVersion.Version)"
+        } elseif ($IsMacOS) {
+            "$($os.SPSoftwareDataType.kernel_version.Substring(7))"
+        }
     }
 }
 
 
 # ===== UPTIME =====
 function info_uptime {
+    # Get the uptime and add to an object
+    if ($IsWindows) {
+        $time = [System.DateTime]::Now - $os.LastBootUpTime
+    } elseif ($IsMacOS) {
+        # Initialize the time object
+        $time = @{Days = 0;Hours = 0;Minutes = 0;Seconds = 0}
+
+        # Get the uptime
+        $uptime = $os.SPSoftwareDataType.uptime.Substring(3)
+
+        # Parse the uptime
+        $dayindex = $uptime.IndexOf(":")
+        $time.Days = $uptime.Substring(0, $dayindex)
+        $hourindex = $uptime.Substring($dayindex + 1).IndexOf(":")
+        $time.Hours = $uptime.Substring($dayindex + 1, $hourindex)
+        $minuteindex = $uptime.Substring($dayindex + $hourindex + 2).IndexOf(":")
+        $time.Minutes = $uptime.Substring($dayindex + $hourindex + 2, $minuteindex)
+        $time.Seconds = $uptime.Substring($dayindex + $hourindex + $minuteindex + 3)
+    }
+
     @{
         title   = "Uptime"
-        content = $(switch ([System.DateTime]::Now - $os.LastBootUpTime) {
-            ({ $PSItem.Days -eq 1 }) { '1 day' }
-            ({ $PSItem.Days -gt 1 }) { "$($PSItem.Days) days" }
-            ({ $PSItem.Hours -eq 1 }) { '1 hour' }
-            ({ $PSItem.Hours -gt 1 }) { "$($PSItem.Hours) hours" }
-            ({ $PSItem.Minutes -eq 1 }) { '1 minute' }
-            ({ $PSItem.Minutes -gt 1 }) { "$($PSItem.Minutes) minutes" }
-        }) -join ' '
+        content =
+            $(switch ($time) {
+                ({ $PSItem.Days -eq 1 }) { '1 day' }
+                ({ $PSItem.Days -gt 1 }) { "$($PSItem.Days) days" }
+                ({ $PSItem.Hours -eq 1 }) { '1 hour' }
+                ({ $PSItem.Hours -gt 1 }) { "$($PSItem.Hours) hours" }
+                ({ $PSItem.Minutes -eq 1 }) { '1 minute' }
+                ({ $PSItem.Minutes -gt 1 }) { "$($PSItem.Minutes) minutes" }
+                ({ $PSItem.Seconds -eq 1 }) { '1 second' }
+                ({ $PSItem.Seconds -gt 1 }) { "$($PSItem.Seconds) seconds" }
+            }) -join ' '
     }
 }
 
 
 # ===== RESOLUTION =====
 function info_resolution {
-    Add-Type -AssemblyName System.Windows.Forms
-    $displays = foreach ($monitor in [System.Windows.Forms.Screen]::AllScreens) {
-        "$($monitor.Bounds.Size.Width)x$($monitor.Bounds.Size.Height)"
-    }
+    $displays =
+        if ($IsWindows) {
+            Add-Type -AssemblyName System.Windows.Forms
+            foreach ($monitor in [System.Windows.Forms.Screen]::AllScreens) {
+                "$($monitor.Bounds.Size.Width)x$($monitor.Bounds.Size.Height)"
+            } -join ', '
+        } elseif ($IsMacOS) { # TODO: Test with multiple monitors
+            $os.SPDisplaysDataType.spdisplays_ndrvs.foreach{
+                "$($_.spdisplays_pixelresolution.Split("_")[1].Trim("Retina"))@$($_._spdisplays_resolution.Split("@ ")[1].Split(".")[0])Hz"
+            } -join ', '
+        }
 
     return @{
         title   = "Resolution"
@@ -654,7 +751,7 @@ function info_resolution {
 # ===== TERMINAL =====
 # this section works by getting the parent processes of the current powershell instance.
 function info_terminal {
-    $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh'
+    $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh', 'login'
     if ($PSVersionTable.PSEdition.ToString() -ne 'Core') {
         $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
         for () {
@@ -665,10 +762,11 @@ function info_terminal {
             break
         }
     } else {
-        $parent = (Get-Process -Id $PID).Parent
+        $parent = [System.Diagnostics.Process]::GetCurrentProcess().Parent
+        $originalParent = $parent
         for () {
             if ($parent.ProcessName -in $programs) {
-                $parent = (Get-Process -Id $parent.ID).Parent
+                $parent = $parent.parent
                 continue
             }
             break
@@ -686,7 +784,12 @@ function info_terminal {
     }
 
     if (-not $terminal) {
-        $terminal = "$e[91m(Unknown)"
+        # macOS returns null for the parent process of zsh when not running as admin
+        $terminal = if ($IsMacOS -and $originalParent.ProcessName -eq 'zsh') {
+            'Terminal'
+        } else {
+            "$e[91m(Unknown)"
+        }
     }
 
     return @{
@@ -698,10 +801,15 @@ function info_terminal {
 
 # ===== THEME =====
 function info_theme {
-    $themeinfo = Get-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name SystemUsesLightTheme, AppsUseLightTheme
-    $themename = (Get-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes' -Name CurrentTheme).CurrentTheme.Split('\')[-1].Replace('.theme', '')
-    $systheme = if ($themeinfo.SystemUsesLightTheme) { "Light" } else { "Dark" }
-    $apptheme = if ($themeinfo.AppsUseLightTheme) { "Light" } else { "Dark" }
+    if ($IsWindows) {
+        $themeinfo = Get-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name SystemUsesLightTheme, AppsUseLightTheme
+        $themename = (Get-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes' -Name CurrentTheme).CurrentTheme.Split('\')[-1].Replace('.theme', '')
+        $systheme = if ($themeinfo.SystemUsesLightTheme) { "Light" } else { "Dark" }
+        $apptheme = if ($themeinfo.AppsUseLightTheme) { "Light" } else { "Dark" }
+    } elseif ($IsMacOS) {
+        $themename = $(defaults read -g AppleInterfaceStyle 2> $null)
+        $systheme, $apptheme = if ($themename -eq "Dark") { "Dark", "Dark" } else { "Light", "Light" } # macOS doesn't differentiate between system and app theme
+    }
     return @{
         title = "Theme"
         content = "$themename (System: $systheme, Apps: $apptheme)"
@@ -711,28 +819,48 @@ function info_theme {
 
 # ===== CPU/GPU =====
 function info_cpu {
-    $cpu = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $Env:COMPUTERNAME).OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
-    $cpuname = $cpu.GetValue("ProcessorNameString")
-    $cpuname = if ($cpuname.Contains('@')) {
-        ($cpuname -Split '@')[0].Trim()
-    } else {
-        $cpuname.Trim()
-    }
+    $cpuname = 
+        if ($IsWindows) {
+            $cpu = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $Env:COMPUTERNAME).OpenSubKey("HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            $cpuname = $cpu.GetValue("ProcessorNameString")
+            if ($cpuname.Contains('@')) {
+                ($cpuname -Split '@')[0].Trim()
+            } else {
+                $cpuname.Trim()
+            }
+
+            "$cpuname @ $($cpuname.GetValue("~MHz") / 1000)GHz" # [math]::Round($cpuname.GetValue("~MHz") / 1000, 1) is 2-5ms slower
+        } elseif ($IsMacOS) {
+            ($os.SPHardwareDataType.chip_type -Split '@')[0].Trim()
+        }
+
     return @{
         title   = "CPU"
-        content = "$cpuname @ $($cpu.GetValue("~MHz") / 1000)GHz" # [math]::Round($cpu.GetValue("~MHz") / 1000, 1) is 2-5ms slower
+        content = $cpuname
     }
 }
 
 function info_gpu {
     [System.Collections.ArrayList]$lines = @()
-    #loop through Win32_VideoController
-    foreach ($gpu in Get-CimInstance -ClassName Win32_VideoController -Property Name -CimSession $cimSession) {
-        [void]$lines.Add(@{
-            title   = "GPU"
-            content = $gpu.Name
-        })
+
+    if ($IsWindows) {
+        #loop through Win32_VideoController
+        foreach ($gpu in Get-CimInstance -ClassName Win32_VideoController -Property Name -CimSession $cimSession) {
+            [void]$lines.Add(@{
+                title   = "GPU"
+                content = $gpu.Name
+            })
+        }
+    } elseif ($IsMacOS) {
+        # Loop over every GPU
+        foreach ($gpu in $os.SPDisplaysDataType) {
+            [void]$lines.Add(@{
+                title   = "GPU"
+                content = $gpu.sppci_model
+            })
+        }
     }
+
     return $lines
 }
 
@@ -766,12 +894,65 @@ function info_cpu_usage {
 
 # ===== MEMORY =====
 function info_memory {
-    $total = $os.TotalVisibleMemorySize / 1mb
-    $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1mb
-    $usage = [math]::floor(($used / $total * 100))
-    return @{
-        title   = "Memory"
-        content = get_level_info "   " $memorystyle $usage "$($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+    if ($IsWindows) {
+        $total = $os.TotalVisibleMemorySize / 1mb
+        $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1mb
+        $usage = [math]::floor(($used / $total * 100))
+        return @{
+            title   = "Memory"
+            content = get_level_info "   " $memorystyle $usage "$($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+        }
+    } elseif ($IsMacOS) {
+        $usedkb = 0
+        [System.Diagnostics.Process]::GetProcesses().WS | ForEach-Object {$usedkb += $_}
+        $used = $usedkb / 1gb
+        $total = [int]$os.SPHardwareDataType.physical_memory.Split(' ')[0]
+        $usage = [math]::floor(($used / $total * 100))
+        return @{
+            title   = "Memory"
+            content = get_level_info "   " $memorystyle $usage "$($used.ToString("#.##")) GiB / $($total.ToString("#.##")) GiB"
+        }
+
+        # TODO: Maybe add the below stats, adds ~70ms for App Memory and ~40ms for Pagefile
+        # Probably should have a flag for this
+        <#
+        # Get memory stats
+        $vmstat = (vm_stat) -split "`n"
+        $vmstats = @{}
+        # Get the page size
+        $start = $vmstat[0].IndexOf("of ")
+        $pagesize = [int]$vmstat[0].Substring($start + 3, ($vmstat[0].IndexOf(" b") - $start - 3))
+        # Loop through the vm_stat output and add each line to a hashtable
+        (1..($vmstat.Count - 2)).ForEach{
+            if ($vmstat[$_].contains('Anonymous pages')) {
+                $apages = (
+                    $vmstat[$_].Substring($vmstat[$_].indexOf(':') + 1, $vmstat[$_].indexOf('.') - ($vmstat[$_].indexOf(':') + 1))
+                ).trim()
+            } elseif ($vmstat[$_].contains('Pages purgeable')) {
+                $ppages = (
+                    $vmstat[$_].Substring($vmstat[$_].indexOf(':') + 1, $vmstat[$_].indexOf('.') - ($vmstat[$_].indexOf(':') + 1))
+                ).trim()
+            }
+        }
+
+        # Get memory pressure
+        $pressure = ((((memory_pressure) -split "`n")[-1] -split ": ")[-1]).TrimEnd("%")
+
+        # Calculate app memory
+        $appmemory = (($apages - $ppages) * $pagesize) / 1Gb
+
+        # Get 2 quantities from sysctl
+        $sysctl = (sysctl vm.page_pageable_internal_count vm.swapusage) -split "`n"
+        # Calculate the size of the pagefile
+        $pageableinternal = [Single]($sysctl[0].Substring($sysctl[0].IndexOf(":") + 2)) * $pagesize
+        # Get how much of the pagefile is being used
+        $swapused = [Single](
+            $sysctl[1].Substring(
+                $sysctl[1].IndexOf("used") + 7,
+                $sysctl[1].IndexOf("M", $sysctl[1].IndexOf("used") + 7) - $sysctl[1].IndexOf("used") - 7
+            )
+        ) / 1kb
+        #>
     }
 }
 
@@ -789,7 +970,11 @@ function info_disk {
     }
 
     [System.IO.DriveInfo]::GetDrives().ForEach{
-        $diskLetter = $_.Name.SubString(0,2)
+        if ($IsWindows){
+            $diskLetter = $_.Name.SubString(0,2)
+        } else {
+            $diskLetter = $_.Name
+        }
 
         if ($showDisks.Contains($diskLetter) -or $showDisks.Contains("*")) {
             try {
@@ -880,7 +1065,7 @@ function info_pkgs {
     }
 
     if ("scoop" -in $ShowPkgs) {
-        $scoopdir = if ($Env:SCOOP) { "$Env:SCOOP\apps" } else { "$Env:UserProfile\scoop\apps" }
+        $scoopdir = if ($Env:SCOOP) { "$Env:SCOOP\apps" } else { "~\scoop\apps" }
 
         if (Test-Path $scoopdir) {
             $scooppkg = (Get-ChildItem -Path $scoopdir -Directory).Count - 1
@@ -888,6 +1073,39 @@ function info_pkgs {
 
         if ($scooppkg) {
             $pkgs += "$scooppkg (scoop)"
+        }
+    }
+
+    # Source: https://github.com/fastfetch-cli/fastfetch/blob/dev/src/detection/packages/packages_apple.c#L29
+    if ("brew" -in $ShowPkgs) {
+        if ($env:HOMEBREW_PREFIX) {
+            $brewpkg = (Get-ChildItem "$env:HOMEBREW_PREFIX/Cellar" -Directory).Count
+            $brewcaskpkg = (Get-ChildItem "$env:HOMEBREW_PREFIX/Caskroom" -Directory).Count
+        } elseif (Test-Path "/opt/homebrew") {
+            $brewpkg = (Get-ChildItem "/opt/homebrew/Cellar" -Directory).Count
+            $brewcaskpkg = (Get-ChildItem "/opt/homebrew/Caskroom" -Directory).Count
+        } elseif (Test-Path "/usr/local/Cellar") {
+            $brewpkg = (Get-ChildItem "/usr/local/Cellar" -Directory).Count
+            $brewcaskpkg = (Get-ChildItem "/usr/local/Caskroom" -Directory).Count
+        }
+
+        if ($brewpkg) {
+            $pkgs += "$brewpkg (brew)"
+        }
+        if ($brewcaskpkg) {
+            $pkgs += "$brewcaskpkg (brew-cask)"
+        }
+    }
+
+    if ("macports" -in $ShowPkgs) {
+        if ($env:MACPORTS_PREFIX) {
+            $macportspkg = (Get-ChildItem "$env:MACPORTS_PREFIX/var/macports/software" -Directory).Count
+        } elseif (Test-Path "/opt/local/var/macports/software") {
+            $macportspkg = (Get-ChildItem "/opt/local/var/macports/software" -Directory).Count
+        }
+
+        if ($macportspkg) {
+            $pkgs += "$macportspkg (macports)"
         }
     }
 
@@ -911,144 +1129,48 @@ function info_pkgs {
 
 # ===== BATTERY =====
 function info_battery {
-    Add-Type -AssemblyName System.Windows.Forms
-    $battery = [System.Windows.Forms.SystemInformation]::PowerStatus
+    if ($IsWindows) {
+        Add-Type -AssemblyName System.Windows.Forms
+        $battery = [System.Windows.Forms.SystemInformation]::PowerStatus
 
-    if ($battery.BatteryChargeStatus -eq 'NoSystemBattery') {
+        if ($battery.BatteryChargeStatus -eq 'NoSystemBattery') {
+            return @{
+                title = "Battery"
+                content = "(none)"
+            }
+        }
+
+        $status = if ($battery.BatteryChargeStatus -like '*Charging*') {
+            "Charging"
+        } elseif ($battery.PowerLineStatus -like '*Online*') {
+            "Plugged in"
+        } else {
+            "Discharging"
+        }
+
+        $timeRemaining = $battery.BatteryLifeRemaining / 60
+        # Don't show time remaining if Windows hasn't properly reported it yet
+        $timeFormatted = if ($timeRemaining -ge 0) {
+            $hours = [math]::floor($timeRemaining / 60)
+            $minutes = [math]::floor($timeRemaining % 60)
+            ", ${hours}h ${minutes}m"
+        }
+
         return @{
             title = "Battery"
-            content = "(none)"
+            content = get_level_info "  " $batterystyle "$([math]::round($battery.BatteryLifePercent * 100))" "$status$timeFormatted" -altstyle
         }
-    }
-
-    $status = if ($battery.BatteryChargeStatus -like '*Charging*') {
-        "Charging"
-    } elseif ($battery.PowerLineStatus -like '*Online*') {
-        "Plugged in"
-    } else {
-        "Discharging"
-    }
-
-    $timeRemaining = $battery.BatteryLifeRemaining / 60
-    # Don't show time remaining if Windows hasn't properly reported it yet
-    $timeFormatted = if ($timeRemaining -ge 0) {
-        $hours = [math]::floor($timeRemaining / 60)
-        $minutes = [math]::floor($timeRemaining % 60)
-        ", ${hours}h ${minutes}m"
-    }
-
-    return @{
-        title = "Battery"
-        content = get_level_info "  " $batterystyle "$([math]::round($battery.BatteryLifePercent * 100))" "$status$timeFormatted" -altstyle
+    } elseif ($IsMacOS) {
+        return @{
+            title = "Battery"
+            content = "$($os.SPPowerDataType.sppower_battery_charge_info.sppower_battery_state_of_charge)% ($($os.SPPowerDataType.sppower_battery_health_info.sppower_battery_health_maximum_capacity) Health)"
+        }
     }
 }
 
 
 # ===== LOCALE =====
 function info_locale {
-    # Hashtables for language and region codes
-    $localeLookup = @{
-        "10" = "American Samoa";                             "100" = "Guinea";                            "10026358" = "Americas";                                                                                                                                            
-        "10028789" = "Åland Islands";                        "10039880" = "Caribbean";                    "10039882" = "Northern Europe";                                                                                                                                            
-        "10039883" = "Southern Africa";                      "101" = "Guyana";                            "10210824" = "Western Europe";                                                                                                                                            
-        "10210825" = "Australia and New Zealand";            "103" = "Haiti";                             "104" = "Hong Kong SAR";                                                                                                                                            
-        "10541" = "Europe";                                  "106" = "Honduras";                          "108" = "Croatia";                                                                                                                                            
-        "109" = "Hungary";                                   "11" = "Argentina";                          "110" = "Iceland";                                                                                                                                            
-        "111" = "Indonesia";                                 "113" = "India";                             "114" = "British Indian Ocean Territory";                                                                                                                                            
-        "116" = "Iran";                                      "117" = "Israel";                            "118" = "Italy";                                                                                                                                            
-        "119" = "Côte d'Ivoire";                             "12" = "Australia";                          "121" = "Iraq";                                                                                                                                            
-        "122" = "Japan";                                     "124" = "Jamaica";                           "125" = "Jan Mayen";                                                                                                                                            
-        "126" = "Jordan";                                    "127" = "Johnston Atoll";                    "129" = "Kenya";                                                                                                                                            
-        "130" = "Kyrgyzstan";                                "131" = "North Korea";                       "133" = "Kiribati";                                                                                                                                            
-        "134" = "Korea";                                     "136" = "Kuwait";                            "137" = "Kazakhstan";                                                                                                                                            
-        "138" = "Laos";                                      "139" = "Lebanon";                           "14" = "Austria";                                                                                                                                            
-        "140" = "Latvia";                                    "141" = "Lithuania";                         "142" = "Liberia";                                                                                                                                            
-        "143" = "Slovakia";                                  "145" = "Liechtenstein";                     "146" = "Lesotho";                                                                                                                                            
-        "147" = "Luxembourg";                                "148" = "Libya";                             "149" = "Madagascar";                                                                                                                                            
-        "151" = "Macao SAR";                                 "15126" = "Isle of Man";                     "152" = "Moldova";                                                                                                                                            
-        "154" = "Mongolia";                                  "156" = "Malawi";                            "157" = "Mali";                                                                                                                                            
-        "158" = "Monaco";                                    "159" = "Morocco";                           "160" = "Mauritius";                                                                                                                                            
-        "161832015" = "Saint Barthélemy";                    "161832256" = "U.S. Minor Outlying Islands"; "161832257" = "Latin America and the Caribbean";                                                                                                                                            
-        "161832258" = "Bonaire, Sint Eustatius and Saba";    "162" = "Mauritania";                        "163" = "Malta";                                                                                                                                            
-        "164" = "Oman";                                      "165" = "Maldives";                          "166" = "Mexico";                                                                                                                                            
-        "167" = "Malaysia";                                  "168" = "Mozambique";                        "17" = "Bahrain";                                                                                                                                            
-        "173" = "Niger";                                     "174" = "Vanuatu";                           "175" = "Nigeria";                                                                                                                                            
-        "176" = "Netherlands";                               "177" = "Norway";                            "178" = "Nepal";                                                                                                                                            
-        "18" = "Barbados";                                   "180" = "Nauru";                             "181" = "Suriname";                                                                                                                                            
-        "182" = "Nicaragua";                                 "183" = "New Zealand";                       "184" = "Palestinian Authority";                                                                                                                                            
-        "185" = "Paraguay";                                  "187" = "Peru";                              "19" = "Botswana";                                                                                                                                            
-        "190" = "Pakistan";                                  "191" = "Poland";                            "192" = "Panama";                                                                                                                                            
-        "193" = "Portugal";                                  "194" = "Papua New Guinea";                  "195" = "Palau";                                                                                                                                            
-        "196" = "Guinea-Bissau";                             "19618" = "North Macedonia";                 "197" = "Qatar";                                                                                                                                            
-        "198" = "Réunion";                                   "199" = "Marshall Islands";                  "2" = "Antigua and Barbuda";                                                                                                                                            
-        "20" = "Bermuda";                                    "200" = "Romania";                           "201" = "Philippines";                                                                                                                                            
-        "202" = "Puerto Rico";                               "203" = "Russia";                            "204" = "Rwanda";                                                                                                                                            
-        "205" = "Saudi Arabia";                              "206" = "Saint Pierre and Miquelon";         "207" = "Saint Kitts and Nevis";                                                                                                                                            
-        "208" = "Seychelles";                                "209" = "South Africa";                      "20900" = "Melanesia";                                                                                                                                            
-        "21" = "Belgium";                                    "210" = "Senegal";                           "212" = "Slovenia";                                                                                                                                            
-        "21206" = "Micronesia";                              "21242" = "Midway Islands";                  "2129" = "Asia";                                                                                                                                            
-        "213" = "Sierra Leone";                              "214" = "San Marino";                        "215" = "Singapore";                                                                                                                                            
-        "216" = "Somalia";                                   "217" = "Spain";                             "218" = "Saint Lucia";                                                                                                                                            
-        "219" = "Sudan";                                     "22" = "Bahamas";                            "220" = "Svalbard";                                                                                                                                            
-        "221" = "Sweden";                                    "222" = "Syria";                             "223" = "Switzerland";                                                                                                                                            
-        "224" = "United Arab Emirates";                      "225" = "Trinidad and Tobago";               "227" = "Thailand";                                                                                                                                            
-        "228" = "Tajikistan";                                "23" = "Bangladesh";                         "231" = "Tonga";                                                                                                                                            
-        "232" = "Togo";                                      "233" = "São Tomé and Príncipe";             "234" = "Tunisia";                                                                                                                                            
-        "235" = "Turkey";                                    "23581" = "Northern America";                "236" = "Tuvalu";                                                                                                                                            
-        "237" = "Taiwan";                                    "238" = "Turkmenistan";                      "239" = "Tanzania";                                                                                                                                            
-        "24" = "Belize";                                     "240" = "Uganda";                            "241" = "Ukraine";                                                                                                                                            
-        "242" = "United Kingdom";                            "244" = "United States";                     "245" = "Burkina Faso";                                                                                                                                            
-        "246" = "Uruguay";                                   "247" = "Uzbekistan";                        "248" = "Saint Vincent and the Grenadines";                                                                                                                                            
-        "249" = "Venezuela";                                 "25" = "Bosnia and Herzegovina";             "251" = "Vietnam";                                                                                                                                            
-        "252" = "U.S. Virgin Islands";                       "253" = "Vatican City";                      "254" = "Namibia";                                                                                                                                            
-        "258" = "Wake Island";                               "259" = "Samoa";                             "26" = "Bolivia";                                                                                                                                            
-        "260" = "Swaziland";                                 "261" = "Yemen";                             "26286" = "Polynesia";                                                                                                                                            
-        "263" = "Zambia";                                    "264" = "Zimbabwe";                          "269" = "Serbia and Montenegro (Former)";                                                                                                                                            
-        "27" = "Myanmar";                                    "270" = "Montenegro";                        "27082" = "Central America";                                                                                                                                            
-        "271" = "Serbia";                                    "27114" = "Oceania";                         "273" = "Curaçao";                                                                                                                                            
-        "276" = "South Sudan";                               "28" = "Benin";                              "29" = "Belarus";                                                                                                                                            
-        "3" = "Afghanistan";                                 "30" = "Solomon Islands";                    "300" = "Anguilla";                                                                                                                                            
-        "301" = "Antarctica";                                "302" = "Aruba";                             "303" = "Ascension Island";                                                                                                                                            
-        "304" = "Ashmore and Cartier Islands";               "305" = "Baker Island";                      "306" = "Bouvet Island";                                                                                                                                            
-        "307" = "Cayman Islands";                            "308" = "Channel Islands";                   "309" = "Christmas Island";                                                                                                                                            
-        "30967" = "Sint Maarten";                            "310" = "Clipperton Island";                 "311" = "Cocos (Keeling) Islands";                                                                                                                                            
-        "312" = "Cook Islands";                              "313" = "Coral Sea Islands";                 "31396" = "South America";                                                                                                                                            
-        "314" = "Diego Garcia";                              "315" = "Falkland Islands";                  "317" = "French Guiana";                                                                                                                                            
-        "31706" = "Saint Martin";                            "318" = "French Polynesia";                  "319" = "French Southern Territories";                                                                                                                                            
-        "32" = "Brazil";                                     "321" = "Guadeloupe";                        "322" = "Guam";                                                                                                                                            
-        "323" = "Guantanamo Bay";                            "324" = "Guernsey";                          "325" = "Heard Island and McDonald Islands";                                                                                                                                            
-        "326" = "Howland Island";                            "327" = "Jarvis Island";                     "328" = "Jersey";                                                                                                                                            
-        "329" = "Kingman Reef";                              "330" = "Martinique";                        "331" = "Mayotte";                                                                                                                                            
-        "332" = "Montserrat";                                "333" = "Netherlands Antilles (Former)";     "334" = "New Caledonia";                                                                                                                                            
-        "335" = "Niue";                                      "336" = "Norfolk Island";                    "337" = "Northern Mariana Islands";                                                                                                                                            
-        "338" = "Palmyra Atoll";                             "339" = "Pitcairn Islands";                  "34" = "Bhutan";                                                                                                                                            
-        "340" = "Rota Island";                               "341" = "Saipan";                            "342" = "South Georgia and the South Sandwich Islands";                                                                                                                                            
-        "343" = "St Helena, Ascension and Tristan da Cunha"; "346" = "Tinian Island";                     "347" = "Tokelau";                                                                                                                                            
-        "348" = "Tristan da Cunha";                          "349" = "Turks and Caicos Islands";          "35" = "Bulgaria";                                                                                                                                            
-        "351" = "British Virgin Islands";                    "352" = "Wallis and Futuna";                 "37" = "Brunei";                                                                                                                                            
-        "38" = "Burundi";                                    "39" = "Canada";                             "39070" = "World";                                                                                                                                            
-        "4" = "Algeria";                                     "40" = "Cambodia";                           "41" = "Chad";                                                                                                                                            
-        "42" = "Sri Lanka";                                  "42483" = "Western Africa";                  "42484" = "Middle Africa";                                                                                                                                            
-        "42487" = "Northern Africa";                         "43" = "Congo";                              "44" = "Congo (DRC)";                                                                                                                                            
-        "45" = "China";                                      "46" = "Chile";                              "47590" = "Central Asia";                                                                                                                                            
-        "47599" = "South-Eastern Asia";                      "47600" = "Eastern Asia";                    "47603" = "Eastern Africa";                                                                                                                                            
-        "47609" = "Eastern Europe";                          "47610" = "Southern Europe";                 "47611" = "Middle East";                                                                                                                                            
-        "47614" = "Southern Asia";                           "49" = "Cameroon";                           "5" = "Azerbaijan";                                                                                                                                            
-        "50" = "Comoros";                                    "51" = "Colombia";                           "54" = "Costa Rica";                                                                                                                                            
-        "55" = "Central African Republic";                   "56" = "Cuba";                               "57" = "Cabo Verde";                                                                                                                                            
-        "59" = "Cyprus";                                     "6" = "Albania";                             "61" = "Denmark";                                                                                                                                            
-        "62" = "Djibouti";                                   "63" = "Dominica";                           "65" = "Dominican Republic";                                                                                                                                            
-        "66" = "Ecuador";                                    "67" = "Egypt";                              "68" = "Ireland";                                                                                                                                            
-        "69" = "Equatorial Guinea";                          "7" = "Armenia";                             "70" = "Estonia";                                                                                                                                            
-        "71" = "Eritrea";                                    "72" = "El Salvador";                        "7299303" = "Timor-Leste";                                                                                                                                            
-        "73" = "Ethiopia";                                   "742" = "Africa";                            "75" = "Czech Republic";                                                                                                                                            
-        "77" = "Finland";                                    "78" = "Fiji";                               "8" = "Andorra";                                                                                                                                            
-        "80" = "Micronesia";                                 "81" = "Faroe Islands";                      "84" = "France";                                                                                                                                            
-        "86" = "Gambia";                                     "87" = "Gabon";                              "88" = "Georgia";                                                                                                                                            
-        "89" = "Ghana";                                      "9" = "Angola";                              "90" = "Gibraltar";                                                                                                                                            
-        "91" = "Grenada";                                    "93" = "Greenland";                          "94" = "Germany";                                                                                                                                            
-        "98" = "Greece";                                     "99" = "Guatemala";                          "9914689" = "Kosovo";                                                                                                                                            
-    }
     $languageLookup = @{
         "aa" = "Afar";                                                "aa-DJ" = "Afar (Djibouti)";                                       "aa-ER" = "Afar (Eritrea)";                                                                                                                                            
         "aa-ET" = "Afar (Ethiopia)";                                  "af" = "Afrikaans";                                                "af-NA" = "Afrikaans (Namibia)";                                                                                                                                            
@@ -1332,11 +1454,18 @@ function info_locale {
         "zu" = "isiZulu";                                             "zu-ZA" = "isiZulu (South Africa)"
     }
 
-    # Get the current user's language and region using the registry
-    $Region = $localeLookup[(Get-ItemProperty -Path "HKCU:Control Panel\International\Geo").Nation]
-    # Iterate through registry key in case multiple languages are configured
-    (Get-ItemProperty -Path "HKCU:Control Panel\International\User Profile").Languages | ForEach-Object {
-        $Languages += " - $($languageLookup[$_])"
+    if ($IsWindows) {
+        # Get the current user's language and region using the registry
+        $Region = $localeLookup[(Get-ItemProperty -Path "HKCU:Control Panel\International\Geo").Nation]
+        # Iterate through registry key in case multiple languages are configured
+        (Get-ItemProperty -Path "HKCU:Control Panel\International\User Profile").Languages | ForEach-Object {
+            $Languages += " - $($languageLookup[$_])"
+        }
+    } elseif ($IsMacOS) {
+        $Region = $languageLookup[$os.SPInternationalDataType[0].user_locale.replace("_", "-")]
+        $os.SPInternationalDataType[0].user_preferred_interface_languages | ForEach-Object {
+            $Languages += " - $($languageLookup[$_.replace("_", "-")])"
+        }
     }
 
     return @{
@@ -1361,31 +1490,43 @@ function info_weather {
 
 # ===== IP =====
 function info_local_ip {
-    try {
-        # Get all network adapters
-        foreach ($ni in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
-            # Get the IP information of each adapter
-            $properties = $ni.GetIPProperties()
-            # Check if the adapter is online, has a gateway address, and the adapter does not have a loopback address
-            if ($ni.OperationalStatus -eq 'Up' -and !($null -eq $properties.GatewayAddresses[0]) -and !$properties.GatewayAddresses[0].Address.ToString().Equals("0.0.0.0")) {
-                # Check if adapter is a WiFi or Ethernet adapter
-                if ($ni.NetworkInterfaceType -eq "Wireless80211" -or $ni.NetworkInterfaceType -eq "Ethernet") {
-                    foreach ($ip in $properties.UnicastAddresses) {
-                        if ($ip.Address.AddressFamily -eq "InterNetwork") {
-                            if (!$local_ip) { $local_ip = $ip.Address.ToString() }
+    return @{
+        title = "Local IP"
+        content = if ($IsWindows) {
+            try {
+                # Get all network adapters
+                foreach ($ni in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+                    # Get the IP information of each adapter
+                    $properties = $ni.GetIPProperties()
+                    # Check if the adapter is online, has a gateway address, and the adapter does not have a loopback address
+                    if ($ni.OperationalStatus -eq 'Up' -and !($null -eq $properties.GatewayAddresses[0]) -and !$properties.GatewayAddresses[0].Address.ToString().Equals("0.0.0.0")) {
+                        # Check if adapter is a WiFi or Ethernet adapter
+                        if ($ni.NetworkInterfaceType -eq "Wireless80211" -or $ni.NetworkInterfaceType -eq "Ethernet") {
+                            foreach ($ip in $properties.UnicastAddresses) {
+                                if ($ip.Address.AddressFamily -eq "InterNetwork") {
+                                    if (!$local_ip) { $local_ip = $ip.Address.ToString() }
+                                }
+                            }
                         }
                     }
                 }
+            } catch {}
+
+            if (-not $local_ip) {
+                "$e[91m(Unknown)"
+            } else {
+                $local_ip
             }
-        }
-    } catch {
-    }
-    return @{
-        title = "Local IP"
-        content = if (-not $local_ip) {
-            "$e[91m(Unknown)"
-        } else {
-            $local_ip
+        } elseif ($IsMacOS) {
+            $local_ip = $os.SPNetworkDataType.ip_address.ForEach{
+                if ($_) { $_ }
+            } -join ", "
+
+            if (-not $local_ip) {
+                "$e[91m(Unknown)"
+            } else {
+                $local_ip
+            }
         }
     }
 }
@@ -1448,6 +1589,10 @@ foreach ($item in $config) {
 
     foreach ($line in $info) {
         $output = "$e[1;33m$($line["title"])$e[0m"
+
+        if (-not ($line["title"] -or $line["content"])) {
+            continue
+        }
 
         if ($line["title"] -and $line["content"]) {
             $output += ": "
