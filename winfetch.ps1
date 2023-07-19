@@ -751,45 +751,52 @@ function info_resolution {
 # ===== TERMINAL =====
 # this section works by getting the parent processes of the current powershell instance.
 function info_terminal {
-    $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh', 'login'
-    if ($PSVersionTable.PSEdition.ToString() -ne 'Core') {
-        $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
-        for () {
-            if ($parent.ProcessName -in $programs) {
-                $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($parent.ID)" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
-                continue
+    if ($IsWindows) {
+        $programs = 'powershell', 'pwsh', 'winpty-agent', 'cmd', 'zsh', 'bash', 'fish', 'env', 'nu', 'elvish', 'csh', 'tcsh', 'python', 'xonsh'
+        if ($PSVersionTable.PSEdition.ToString() -ne 'Core') {
+            $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
+            for () {
+                if ($parent.ProcessName -in $programs) {
+                    $parent = Get-Process -Id (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($parent.ID)" -Property ParentProcessId -CimSession $cimSession).ParentProcessId -ErrorAction Ignore
+                    continue
+                }
+                break
             }
-            break
-        }
-    } else {
-        $parent = [System.Diagnostics.Process]::GetCurrentProcess().Parent
-        $originalParent = $parent
-        for () {
-            if ($parent.ProcessName -in $programs) {
-                $parent = $parent.parent
-                continue
+        } else {
+            $parent = (Get-Process -Id $PID).Parent
+            for () {
+                if ($parent.ProcessName -in $programs) {
+                    $parent = (Get-Process -Id $parent.ID).Parent
+                    continue
+                }
+                break
             }
-            break
         }
-    }
+        $terminal = switch ($parent.ProcessName) {
+            { $PSItem -in 'explorer', 'conhost' } { 'Windows Console' }
+            'Console' { 'Console2/Z' }
+            'ConEmuC64' { 'ConEmu' }
+            'WindowsTerminal' { 'Windows Terminal' }
+            'FluentTerminal.SystemTray' { 'Fluent Terminal' }
+            'Code' { 'Visual Studio Code' }
+            default { $PSItem }
+        }
+    } elseif ($IsMacOS) {
+        $terminal = switch ($env:TERM_PROGRAM) {
+            "apple_terminal" { "Apple Terminal" }
+            "iterm.app" { "iTerm2" }
+            "hyper" { "HyperTerm" }
+            "vscode" { "VSCode Integrated Terminal" }
+            default { $_ }
+        }
 
-    $terminal = switch ($parent.ProcessName) {
-        { $PSItem -in 'explorer', 'conhost' } { 'Windows Console' }
-        'Console' { 'Console2/Z' }
-        'ConEmuC64' { 'ConEmu' }
-        'WindowsTerminal' { 'Windows Terminal' }
-        'FluentTerminal.SystemTray' { 'Fluent Terminal' }
-        'Code' { 'Visual Studio Code' }
-        default { $PSItem }
+        if ($terminal) {
+            $terminal += " (Version $env:TERM_PROGRAM_VERSION)"
+        }
     }
 
     if (-not $terminal) {
-        # macOS returns null for the parent process of zsh when not running as admin
-        $terminal = if ($IsMacOS -and $originalParent.ProcessName -eq 'zsh') {
-            'Terminal'
-        } else {
-            "$e[91m(Unknown)"
-        }
+        $terminal = "$e[91m(Unknown)"
     }
 
     return @{
