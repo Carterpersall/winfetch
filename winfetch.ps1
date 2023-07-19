@@ -867,22 +867,30 @@ function info_gpu {
 
 # ===== CPU USAGE =====
 function info_cpu_usage {
-    # Get all running processes and assign to a variable to allow reuse
-    $processes = [System.Diagnostics.Process]::GetProcesses()
-    $loadpercent = 0
-    $proccount = $processes.Count
     # Get the number of logical processors in the system
     $CPUs = [System.Environment]::ProcessorCount
 
-    $timenow = [System.Datetime]::Now
-    $processes.ForEach{
-        if ($_.StartTime -gt 0) {
-            # Replicate the functionality of New-Timespan
-            $timespan = ($timenow.Subtract($_.StartTime)).TotalSeconds
+    if ($IsWindows) {
+        # Get all running processes and assign to a variable to allow reuse
+        $processes = [System.Diagnostics.Process]::GetProcesses()
+        $proccount = $processes.Count
+        $loadpercent = 0
 
-            # Calculate the CPU usage of the process and add to the total
-            $loadpercent += $_.CPU * 100 / $timespan / $CPUs
+        $timenow = [System.Datetime]::Now
+        $processes.ForEach{
+            if ($_.StartTime -gt 0) {
+                # Replicate the functionality of New-Timespan
+                $timespan = ($timenow.Subtract($_.StartTime)).TotalSeconds
+
+                # Calculate the CPU usage of the process and add to the total
+                $loadpercent += $_.CPU * 100 / $timespan / $CPUs
+            }
         }
+    } elseif ($IsMacOS) {
+        # Get the CPU usage of all processes
+        $processes = ps -rAo %cpu
+        $proccount = $processes.Count
+        $loadpercent = ($processes | Select-Object -Skip 1 | Measure-Object -Sum).Sum / $CPUs
     }
 
     return @{
@@ -914,7 +922,7 @@ function info_memory {
         }
 
         # TODO: Maybe add the below stats, adds ~70ms for App Memory and ~40ms for Pagefile
-        # Probably should have a flag for this
+        # Probably should have a config option for this
         <#
         # Get memory stats
         $vmstat = (vm_stat) -split "`n"
