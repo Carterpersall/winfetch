@@ -603,6 +603,11 @@ function info_os {
             title = "OS"
             content = "macOS " + [System.Environment]::OSVersion.Version
         }
+    } else {
+        return @{
+            title   = "OS"
+            content = uname -s
+        }
     }
 }
 
@@ -619,6 +624,11 @@ function info_motherboard {
         return @{
             title   = "Motherboard"
             content = $os.SPHardwareDataType.machine_model
+        }
+    } else {
+        return @{
+            title   = "Motherboard"
+            content = "$e[1;31mNot Implemented$e[0m"
         }
     }
 }
@@ -670,6 +680,12 @@ function info_computer {
                 "Apple $deviceModel"
             }
         }
+    } else {
+        return @{
+            title   = "Host"
+            content = "$e[1;31mNot Implemented$e[0m"
+
+        }
     }
 }
 
@@ -683,6 +699,8 @@ function info_kernel {
             "$([System.Environment]::OSVersion.Version)"
         } elseif ($IsMacOS) {
             "$($os.SPSoftwareDataType.kernel_version.Substring(7))"
+        } else {
+            uname -r
         }
     }
 }
@@ -708,6 +726,9 @@ function info_uptime {
         $minuteindex = $uptime.Substring($dayindex + $hourindex + 2).IndexOf(":")
         $time.Minutes = $uptime.Substring($dayindex + $hourindex + 2, $minuteindex)
         $time.Seconds = $uptime.Substring($dayindex + $hourindex + $minuteindex + 3)
+    } else {
+        # Parse the uptime
+        $time = [DateTime]::Now - [DateTime](uptime -s)
     }
 
     @{
@@ -739,7 +760,29 @@ function info_resolution {
             $os.SPDisplaysDataType.spdisplays_ndrvs.foreach{
                 "$($_.spdisplays_pixelresolution.Split("_")[1].Trim("Retina"))@$($_._spdisplays_resolution.Split("@ ")[1].Split(".")[0])Hz"
             } -join ', '
+        } else {
+            # Set $ErrorActionPreference to "SilentlyContinue" to suppress errors
+            # Needed to suppress permission errors and file not found errors
+            $temp = $ErrorActionPreference
+            $ErrorActionPreference = "SilentlyContinue"
+
+            # Loop over every DRM (Direct Rendering Manager) device
+            [System.IO.Directory]::GetDirectories("/sys/class/drm/") | ForEach-Object {
+                # Create object with the directory name and the first line of the "modes" file
+                # The first line of the "modes" file is the current resolution
+                # The file will be empty if there is no display connected to the device
+                [IO.File]::OpenText("$_/modes").ReadLine()
+            # Filter out devices with an empty "modes" file
+            } | Where-Object { $_ }
+
+            # Restore $ErrorActionPreference
+            $ErrorActionPreference = $temp
         }
+
+    # If no resolutions were found
+    if ($displays -eq $null) {
+        $displays = "$e[1;31mNot Found$e[0m"
+    }
 
     return @{
         title   = "Resolution"
@@ -793,6 +836,68 @@ function info_terminal {
         if ($terminal) {
             $terminal += " (Version $env:TERM_PROGRAM_VERSION)"
         }
+    } else {
+        # Check for terminal-specific environment variables
+        $terminal = if ($env:TERM_PROGRAM) {
+            switch ($env:TERM_PROGRAM) {
+                "alacritty" { "Alacritty" }
+                "terminator" { "Terminator" }
+                "terminology" { "Terminology" }
+                "tilix" { "Tilix" }
+                "xfce4-terminal" { "XFCE4 Terminal" }
+                "xterm" { "Xterm" }
+                "gnome-terminal" { "GNOME Terminal" }
+                "konsole" { "Konsole" }
+                "kitty" { "Kitty" }
+                "cool-retro-term" { "Cool Retro Term" }
+                "terminology" { "Terminology" }
+                "terminator" { "Terminator" }
+                "tilda" { "Tilda" }
+                "hyper" { "HyperTerm" }
+                "vscode" { "VSCode Integrated Terminal" }
+                default { $_ }
+            }
+        } elseif ($env:SSH_CONNECTION) {
+            $env:SSH_TTY
+        } elseif ($env:WT_SESSION -or $env:WT_PROFILE_ID){
+            "Windows Terminal"
+        } elseif ($env:ConEmuPID) {
+            "ConEmu"
+        } elseif ($env:ALACRITTY_SOCKET -or $env:ALACRITTY_LOG -or $env:ALACRITTY_WINDOW_ID) {
+            "Alacritty"
+        } elseif ($env:TERMUX_VERSION -or $env:TERMUX_MAIN_PACKAGE_FORMAT -or $env:TMUX_TMPDIR) {
+            "Termux"
+        } elseif ($env:KONSOLE_VERSION) {
+            "Konsole"
+        } else {
+            # If no matches in the environment variables, climb the process tree until we find a terminal
+
+            # Get the parent process of the current process
+            $parent = [System.Diagnostics.Process]::GetCurrentProcess().Parent
+
+            # If the parent process is a shell, pipe, or redirect, keep climbing
+            while ($parent.ProcessName.Split(" ")[0] -in @(
+                    # Shells
+                    'powershell', 'pwsh', 'cmd', 'bash', 'zsh', 'ksh', 'mksh', 'oksh', 'csh', 'tcsh', 'fish', 'dash', 'nu', 'elvish', 'xonsh', 'ash',
+                    # Pipes and redirects
+                    'sudo', 'su', 'doas', 'strace', 'sshd', 'gdb', 'lldb', 'guake-wrapped', 'debug'
+            )) {
+                $parent = $parent.Parent
+            }
+
+            # Attempt to identify the terminal based on the parent process
+            switch ($parent.ProcessName.Split(" ")[0]) {
+                { $_ -in 'explorer', 'conhost' } { 'Windows Console' }
+                'Console' { 'Console2/Z' }
+                'ConEmuC64' { 'ConEmu' }
+                'WindowsTerminal' { 'Windows Terminal' }
+                'FluentTerminal.SystemTray' { 'Fluent Terminal' }
+                'Code' { 'VSCode Integrated Terminal' }
+                'xfce4-terminal' { 'XFCE4 Terminal' }
+                'gnome-terminal-server' { 'GNOME Terminal' }
+                default { $_ }
+            }
+        }
     }
 
     if (-not $terminal) {
@@ -816,7 +921,12 @@ function info_theme {
     } elseif ($IsMacOS) {
         $themename = $(defaults read -g AppleInterfaceStyle 2> $null)
         $systheme, $apptheme = if ($themename -eq "Dark") { "Dark", "Dark" } else { "Light", "Light" } # macOS doesn't differentiate between system and app theme
+    } else {
+        $themename = "$e[1;31mNot Implemented$e[0m"
+        $systheme = "$e[1;31mNot Implemented$e[0m"
+        $apptheme = "$e[1;31mNot Implemented$e[0m"
     }
+
     return @{
         title = "Theme"
         content = "$themename (System: $systheme, Apps: $apptheme)"
@@ -839,6 +949,8 @@ function info_cpu {
             "$cpuname @ $($cpuname.GetValue("~MHz") / 1000)GHz" # [math]::Round($cpuname.GetValue("~MHz") / 1000, 1) is 2-5ms slower
         } elseif ($IsMacOS) {
             ($os.SPHardwareDataType.chip_type -Split '@')[0].Trim()
+        }else {
+            "$e[1;31mNot Implemented$e[0m"
         }
 
     return @{
@@ -864,6 +976,23 @@ function info_gpu {
             [void]$lines.Add(@{
                 title   = "GPU"
                 content = $gpu.sppci_model
+            })
+        }
+    } else {
+        # Source: github.com/hykilpikonna/hyfetch/blob/master/neofetch#L3195-L3205
+        # TODO: Convert to PowerShell and add alternative implementations
+        $gpus = lspci -mm | awk -F '\"|\" \"|\\(' '/"Display|"3D|"VGA/ { a[$0] = $1 " " $3 " " ($(NF-1) ~ /^$|^Device [[:xdigit:]]+$/ ? $4 : $(NF-1))}
+                              END { for (i in a) {
+                                  if (!seen[a[i]]++) {
+                                      sub("^[^ ]+ ", "", a[i]);
+                                      print a[i]
+                                  }
+                              }}'
+
+        foreach ($gpu in $gpus) {
+            [void]$lines.Add(@{
+                title   = "GPU"
+                content = $gpu
             })
         }
     }
@@ -896,6 +1025,10 @@ function info_cpu_usage {
     } elseif ($IsMacOS) {
         # Get the CPU usage of all processes
         $processes = ps -rAo %cpu
+        $proccount = $processes.Count
+        $loadpercent = ($processes | Select-Object -Skip 1 | Measure-Object -Sum).Sum / $CPUs
+    } else {
+        $processes = ps -Ao %cpu
         $proccount = $processes.Count
         $loadpercent = ($processes | Select-Object -Skip 1 | Measure-Object -Sum).Sum / $CPUs
     }
@@ -968,6 +1101,28 @@ function info_memory {
             )
         ) / 1kb
         #>
+    } else {
+        $used = 0
+        $total = 0
+        # MemUsed = Memtotal + Shmem - MemFree - Buffers - Cached - SReclaimable
+        $meminfo = (Get-Content "/proc/meminfo")
+        $available = $meminfo.indexOf("MemAvailable")
+        if ($available -gt -1) {
+            $totalpos = $meminfo.indexOf("MemTotal:")
+            $total = [int]$meminfo.Substring($totalpos, $meminfo.indexOf("`n", $totalpos)).TrimStart().TrimEnd(" kB")
+        }
+        $meminfo -split "`n" | ForEach-Object {
+            switch ($_.Substring(0,$_.indexOf(":"))) {
+                "MemTotal" {
+                    
+                }
+            }
+        }
+
+        return @{
+            title   = "Memory"
+            content = "$e[1;31mNot Implemented$e[0m"
+        }
     }
 }
 
@@ -1179,6 +1334,11 @@ function info_battery {
         return @{
             title = "Battery"
             content = "$($os.SPPowerDataType.sppower_battery_charge_info.sppower_battery_state_of_charge)% ($($os.SPPowerDataType.sppower_battery_health_info.sppower_battery_health_maximum_capacity) Health)"
+        }
+    } else {
+        return @{
+            title = "Battery"
+            content = "$e[1;31mNot Implemented$e[0m"
         }
     }
 }
@@ -1481,6 +1641,8 @@ function info_locale {
         $os.SPInternationalDataType[0].user_preferred_interface_languages | ForEach-Object {
             $Languages += " - $($languageLookup[$_.replace("_", "-")])"
         }
+    } else {
+        $Region = "$e[1;31mNot Implemented$e[0m"
     }
 
     return @{
@@ -1542,6 +1704,8 @@ function info_local_ip {
             } else {
                 $local_ip
             }
+        } else {
+            "$e[1;31mNot Implemented$e[0m"
         }
     }
 }
